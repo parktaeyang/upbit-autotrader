@@ -1,0 +1,10 @@
+server:
+  port: 8081
+
+upbit:
+  base-url: https://api.upbit.com
+  websocket-url: wss://api.upbit.com/websocket/v1
+
+  # 👉 개인 환경에서 실제 값으로 채우세요.
+  access-key: YOUR_UPBIT_ACCESS_KEY
+  secret-key: YOUR_UPBIT_SECRET_KEY

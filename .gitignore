@@ -1,0 +1,64 @@
+### Gradle ###
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### STS / Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+### Java / Spring (backend) ###
+backend/build/
+backend/out/
+backend/.gradle/
+backend/.idea/
+backend/*.iml
+backend/target/
+backend/.classpath
+backend/.project
+backend/.settings/
+
+# Spring 환경설정 (실제 키/비번은 노출 금지)
+backend/src/main/resources/application.yml
+backend/src/main/resources/application.properties
+
+### Node / React (frontend) ###
+frontend/node_modules/
+frontend/dist/
+frontend/.idea/
+frontend/*.log
+frontend/.env.local
+frontend/.env
+
+### Mac / OS ###
+.DS_Store
+*.log
