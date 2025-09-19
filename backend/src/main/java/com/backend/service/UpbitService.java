@@ -90,6 +90,33 @@ public class UpbitService {
         }
     }
 
+    // 여러 종목에 잔액을 분배해서 시장가 매수
+    public void buyMarketOrders(List<String> markets) {
+        if (markets == null || markets.isEmpty()) {
+            System.out.println("⚠️ 매수할 종목이 없습니다.");
+            return;
+        }
+
+        double balance = getBalance("KRW");
+        if (balance <= 0) {
+            System.out.println("⚠️ KRW 잔액이 부족합니다.");
+            return;
+        }
+
+        // 수수료 감안해 99.5% 사용
+        double usableBalance = balance * 0.995;
+
+        // 종목 수만큼 균등 분배
+        double perMarket = usableBalance / markets.size();
+
+        System.out.println("💰 총 잔액: " + balance + " KRW");
+        System.out.println("📊 종목별 매수금액: " + perMarket + " KRW");
+
+        for (String market : markets) {
+            buyMarketOrder(market, perMarket);
+        }
+    }
+
     // 시장가 매도
     public void sellMarketOrder(String market, double volume) {
         if (testMode) {
