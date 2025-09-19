@@ -16,6 +16,9 @@ public class UpbitService {
     private final WebClient webClient = WebClient.create("https://api.upbit.com");
     private final UpbitJwtProvider jwtProvider;
 
+    // 테스트 모드 여부 (true면 실제 주문 안 날림)
+    private final boolean testMode = false;
+
     public UpbitService(com.backend.config.UpbitProperties props) {
         this.jwtProvider = new UpbitJwtProvider(props.getAccessKey(), props.getSecretKey());
     }
@@ -43,15 +46,20 @@ public class UpbitService {
                 .map(AccountDto::getBalanceAsDouble)
                 .orElse(0.0);
     }
-        /**
-         * 시장가 매수 (KRW로 지정)
-         */
+
+    // 시장가 매수
     public void buyMarketOrder(String market, double krwAmount) {
-        Map<String, String> body = new HashMap<>();
-        body.put("market", market);
-        body.put("side", "bid");
-        body.put("price", String.valueOf(krwAmount));
-        body.put("ord_type", "price"); // KRW 전액 매수
+        if (testMode) {
+            System.out.println("💡 [TEST MODE] 매수 시뮬레이션: " + market + " KRW=" + krwAmount);
+            return;
+        }
+
+        Map<String, String> body = Map.of(
+                "market", market,
+                "side", "bid",
+                "price", String.valueOf(krwAmount),
+                "ord_type", "price"
+        );
 
         String jwt = jwtProvider.createJwt();
 
@@ -63,18 +71,22 @@ public class UpbitService {
                 .bodyToMono(String.class)
                 .block();
 
-        System.out.println("✅ 매수 응답: " + response);
+        System.out.println("✅ [REAL TRADE] 💸매수 응답: " + response);
     }
 
-    /**
-     * 시장가 매도 (보유 수량 지정)
-     */
+    // 시장가 매도
     public void sellMarketOrder(String market, double volume) {
-        Map<String, String> body = new HashMap<>();
-        body.put("market", market);
-        body.put("side", "ask");
-        body.put("volume", String.valueOf(volume));
-        body.put("ord_type", "market");
+        if (testMode) {
+            System.out.println("💡 [TEST MODE] 매도 시뮬레이션: " + market + " 수량=" + volume);
+            return;
+        }
+
+        Map<String, String> body = Map.of(
+                "market", market,
+                "side", "ask",
+                "volume", String.valueOf(volume),
+                "ord_type", "market"
+        );
 
         String jwt = jwtProvider.createJwt();
 
@@ -86,6 +98,6 @@ public class UpbitService {
                 .bodyToMono(String.class)
                 .block();
 
-        System.out.println("✅ 매도 응답: " + response);
+        System.out.println("✅ [REAL TRADE] 🪙매도 응답: " + response);
     }
 }

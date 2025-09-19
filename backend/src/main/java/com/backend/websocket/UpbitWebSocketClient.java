@@ -2,6 +2,7 @@ package com.backend.websocket;
 
 import com.backend.service.UpbitService;
 import jakarta.annotation.PostConstruct;
+import lombok.Getter;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -11,8 +12,11 @@ import java.util.concurrent.CompletionStage;
 
 @Component
 public class UpbitWebSocketClient {
-    private final UpbitService upbitService;
+    private WebSocket webSocket;  // 연결 객체
+    @Getter
+    private boolean running = false;
 
+    private final UpbitService upbitService;
     private double lastBuyPrice = 0.0;
     private boolean holding = false;
 
@@ -20,50 +24,66 @@ public class UpbitWebSocketClient {
         this.upbitService = upbitService;
     }
 
-    @PostConstruct
+    // 자동매매 시작
     public void connect() {
-        HttpClient client = HttpClient.newHttpClient();
+        if (running) {
+            System.out.println("⚠️ 이미 자동매매 실행 중입니다.");
+            return;
+        }
 
+        HttpClient client = HttpClient.newHttpClient();
         client.newWebSocketBuilder()
                 .buildAsync(URI.create("wss://api.upbit.com/websocket/v1"), new WebSocket.Listener() {
                     @Override
-                    public void onOpen(WebSocket webSocket) {
-                        System.out.println("✅ WebSocket 연결됨");
+                    public void onOpen(WebSocket ws) {
+                        webSocket = ws;
+                        running = true;
+                        System.out.println("✅ WebSocket 연결됨 (자동매매 시작)");
                         String subscribeMsg = "[{\"ticket\":\"test\"},{\"type\":\"ticker\",\"codes\":[\"KRW-BTT\"]}]";
-                        webSocket.sendText(subscribeMsg, true);
-                        WebSocket.Listener.super.onOpen(webSocket);
+                        ws.sendText(subscribeMsg, true);
                     }
 
                     @Override
-                    public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                    public CompletionStage<?> onText(WebSocket ws, CharSequence data, boolean last) {
+                        if (!running) return null;
+
                         String msg = data.toString();
                         double price = extractTradePrice(msg);
                         System.out.println("📡 현재가: " + price);
 
+                        // 매수/매도 로직
                         if (!holding) {
-                            // ✅ KRW 전액으로 매수
-                            double krwBalance = upbitService.getBalance("KRW");
-                            if (krwBalance > 5000) { // 최소 주문금액(5천원) 체크
-                                upbitService.buyMarketOrder("KRW-BTT", krwBalance);
+                            double krw = upbitService.getBalance("KRW");
+                            if (krw > 5000) {
+                                upbitService.buyMarketOrder("KRW-BTT", krw);
                                 lastBuyPrice = price;
                                 holding = true;
                             }
                         } else if (holding && price >= lastBuyPrice * 1.01) {
-                            // ✅ BTT 전량 매도
-                            double bttBalance = upbitService.getBalance("BTT");
-                            if (bttBalance > 0) {
-                                upbitService.sellMarketOrder("KRW-BTT", bttBalance);
+                            double btt = upbitService.getBalance("BTT");
+                            if (btt > 0) {
+                                upbitService.sellMarketOrder("KRW-BTT", btt);
                                 holding = false;
                             }
                         }
-
-                        return WebSocket.Listener.super.onText(webSocket, data, last);
+                        return WebSocket.Listener.super.onText(ws, data, last);
                     }
                 });
     }
 
+    // 자동매매 중지
+    public void disconnect() {
+        if (webSocket != null) {
+            running = false;
+            webSocket.abort();  // 즉시 연결 종료
+            webSocket = null;
+            System.out.println("🛑 WebSocket 연결 종료됨 (자동매매 중지)");
+        } else {
+            System.out.println("⚠️ 자동매매가 실행 중이 아닙니다.");
+        }
+    }
+
     private double extractTradePrice(String msg) {
-        // 단순 파싱 예제 (실제는 JSON 라이브러리 사용)
         String key = "\"trade_price\":";
         int idx = msg.indexOf(key);
         if (idx > 0) {
@@ -73,4 +93,5 @@ public class UpbitWebSocketClient {
         }
         return 0.0;
     }
+
 }
