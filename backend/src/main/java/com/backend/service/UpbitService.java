@@ -2,13 +2,15 @@ package com.backend.service;
 
 import com.backend.dto.AccountDto;
 import com.backend.util.UpbitJwtProvider;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 @Service
 public class UpbitService {
@@ -54,24 +56,38 @@ public class UpbitService {
             return;
         }
 
-        Map<String, String> body = Map.of(
-                "market", market,
-                "side", "bid",
-                "price", String.valueOf(krwAmount),
-                "ord_type", "price"
-        );
+        long krwInt = BigDecimal.valueOf(krwAmount * 0.995)
+                .setScale(0, RoundingMode.FLOOR)
+                .longValue();
 
-        String jwt = jwtProvider.createJwt();
+        String priceStr = String.valueOf(krwInt);
 
-        String response = webClient.post()
-                .uri("/v1/orders")
-                .header("Authorization", "Bearer " + jwt)
-                .bodyValue(body)
-                .retrieve()
-                .bodyToMono(String.class)
-                .block();
+        String queryString = "market=" + market +
+                "&side=bid" +
+                "&price=" + priceStr +
+                "&ord_type=price";
 
-        System.out.println("✅ [REAL TRADE] 💸매수 응답: " + response);
+        String jwt = jwtProvider.createJwtWithQuery(queryString);
+
+        System.out.println("📤 매수 요청: " + queryString);
+
+        try {
+            String response = webClient.post()
+                    .uri("/v1/orders")
+                    .header("Authorization", "Bearer " + jwt)
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(BodyInserters.fromFormData("market", market)
+                            .with("side", "bid")
+                            .with("price", priceStr)
+                            .with("ord_type", "price"))
+                    .exchangeToMono(clientResponse -> clientResponse.bodyToMono(String.class))
+                    .block();
+
+            System.out.println("📥 매수 응답: " + response);
+        } catch (Exception e) {
+            System.err.println("❌ 매수 요청 실패: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     // 시장가 매도
@@ -81,23 +97,33 @@ public class UpbitService {
             return;
         }
 
-        Map<String, String> body = Map.of(
-                "market", market,
-                "side", "ask",
-                "volume", String.valueOf(volume),
-                "ord_type", "market"
-        );
+        String queryString = "market=" + market +
+                "&side=ask" +
+                "&volume=" + volume +
+                "&ord_type=market";
 
-        String jwt = jwtProvider.createJwt();
+        // 2. JWT 생성 (query_hash 포함)
+        String jwt = jwtProvider.createJwtWithQuery(queryString);
 
-        String response = webClient.post()
-                .uri("/v1/orders")
-                .header("Authorization", "Bearer " + jwt)
-                .bodyValue(body)
-                .retrieve()
-                .bodyToMono(String.class)
-                .block();
+        System.out.println("📤 매도 요청: " + queryString);
 
-        System.out.println("✅ [REAL TRADE] 🪙매도 응답: " + response);
+        try {
+            String response = webClient.post()
+                    .uri("/v1/orders")
+                    .header("Authorization", "Bearer " + jwt)
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(BodyInserters.fromFormData("market", market)
+                            .with("side", "ask")
+                            .with("volume", String.valueOf(volume))
+                            .with("ord_type", "market"))
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            System.out.println("📥 매도 응답: " + response);
+        } catch (Exception e) {
+            System.err.println("❌ 매도 요청 실패: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }
