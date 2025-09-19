@@ -8,8 +8,9 @@ import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.CompletionStage;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 @Component
@@ -25,8 +26,20 @@ public class UpbitWebSocketClient {
     // 보유중인 종목
     private final Set<String> holdings = new HashSet<>();
 
+    // 자동 재연결 관련
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+    private Instant lastMessageTime = Instant.now();
+
     public UpbitWebSocketClient(UpbitService upbitService) {
         this.upbitService = upbitService;
+
+        // 주기적으로 연결 상태 점검 (15초 이상 메시지 없으면 재연결)
+        scheduler.scheduleAtFixedRate(() -> {
+            if (running && Instant.now().minusSeconds(15).isAfter(lastMessageTime)) {
+                System.out.println("⚠️ 데이터 수신 끊김 → 재연결 시도");
+                reconnect();
+            }
+        }, 15, 15, TimeUnit.SECONDS);
     }
 
     /** 자동매매 시작 */
@@ -63,9 +76,10 @@ public class UpbitWebSocketClient {
                     @Override
                     public CompletionStage<?> onBinary(WebSocket ws, ByteBuffer data, boolean last) {
                         if (!running) return null;
+                        lastMessageTime = Instant.now();
 
                         String msg = StandardCharsets.UTF_8.decode(data).toString();
-                        String market = extractMarket(msg); // 예: "KRW-BTC"
+                        String market = extractMarket(msg);
                         double price = extractTradePrice(msg);
 
                         if (market != null && price > 0) {
@@ -94,7 +108,6 @@ public class UpbitWebSocketClient {
                             }
                         }
 
-                        // 다음 메시지 요청
                         ws.request(1);
                         return WebSocket.Listener.super.onBinary(ws, data, last);
                     }
@@ -102,12 +115,38 @@ public class UpbitWebSocketClient {
                     @Override
                     public CompletionStage<?> onText(WebSocket ws, CharSequence data, boolean last) {
                         if (!running) return null;
-                        String msg = data.toString();
-                        System.out.println("RAW (text): " + msg);
+                        lastMessageTime = Instant.now();
+                        System.out.println("RAW (text): " + data);
                         ws.request(1);
                         return WebSocket.Listener.super.onText(ws, data, last);
                     }
+
+                    @Override
+                    public CompletionStage<?> onClose(WebSocket ws, int statusCode, String reason) {
+                        System.out.println("❌ WebSocket 연결 종료 (" + reason + ")");
+                        running = false;
+                        reconnect();
+                        return WebSocket.Listener.super.onClose(ws, statusCode, reason);
+                    }
+
+                    @Override
+                    public void onError(WebSocket ws, Throwable error) {
+                        System.err.println("❌ WebSocket 오류: " + error.getMessage());
+                        running = false;
+                        reconnect();
+                    }
                 });
+    }
+
+    /** 자동 재연결 */
+    private void reconnect() {
+        if (running) return;
+        System.out.println("🔄 자동 재연결 시도 중...");
+        disconnect();
+        // holdings, lastBuyPrices 유지 → 전략 지속
+        connect(new ArrayList<>(lastBuyPrices.keySet().isEmpty()
+                ? List.of("KRW-BTT", "KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-DOGE")
+                : lastBuyPrices.keySet()));
     }
 
     /** 자동매매 중지 */
