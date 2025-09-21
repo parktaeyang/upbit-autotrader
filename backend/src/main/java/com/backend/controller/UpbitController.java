@@ -64,9 +64,7 @@ public class UpbitController {
     // 자동매매 상태 확인
     @GetMapping("/auto/status")
     public String getAutoTradingStatus() {
-        return webSocketClient.isRunning()
-                ? "✅ 자동매매 실행 중"
-                : "⏹ 자동매매 중지됨";
+        return webSocketClient.status();
     }
 }
 
