@@ -33,11 +33,13 @@ public class UpbitWebSocketClient {
     // 리밸런싱 재진입 방지 및 쿨다운
     private volatile boolean isRebalancing = false;
     private volatile long lastTriggerAt = 0L;
+    private volatile long lastPortfolioCheckAt = 0L; // 포트폴리오 체크 쿨다운용
 
-    // 근사 수수료율(0.05%), 최소 주문금액, 쿨다운(1분)
+    // 근사 수수료율(0.05%), 최소 주문금액, 쿨다운(1분), 포트폴리오 체크 간격(10초)
     private static final double FEE_RATE = 0.0005;
     private static final int MIN_ORDER_KRW = 5000;
     private static final long COOLDOWN_MS = 60_000L;
+    private static final long PORTFOLIO_CHECK_INTERVAL_MS = 20_000L; // 10초마다 체크
 
     private volatile long lastMessageTime = 0;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
@@ -156,11 +158,16 @@ public class UpbitWebSocketClient {
      * - 대상: 현재 보유중인 코인만 (balance > 0)
      * - 수수료 근사 반영
      * - 쿨다운 1분
+     * - API 호출 제한: 20초마다 accounts 조회 (rate limit 방지)
      */
     private void maybeCheckPortfolioTrigger() {
         long now = System.currentTimeMillis();
         if (isRebalancing) return;
         if (now - lastTriggerAt < COOLDOWN_MS) return;
+        
+        // API 호출 rate limit 방지: 마지막 체크 후 20초가 지나지 않았으면 스킵
+        if (now - lastPortfolioCheckAt < PORTFOLIO_CHECK_INTERVAL_MS) return;
+        lastPortfolioCheckAt = now;
 
         try {
             var accounts = upbitService.getAccounts();
@@ -264,6 +271,9 @@ public class UpbitWebSocketClient {
      * WebSocket Listener
      */
     private class Listener implements WebSocket.Listener {
+        
+        // 불완전한 JSON 메시지를 위한 버퍼
+        private StringBuilder messageBuffer = new StringBuilder();
 
         @Override
         public void onOpen(WebSocket webSocket) {
@@ -275,17 +285,67 @@ public class UpbitWebSocketClient {
             try {
                 byte[] bytes = new byte[data.remaining()];
                 data.get(bytes);
-                String json = new String(bytes);
-
+                String chunk = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                
+                // 버퍼에 추가
+                messageBuffer.append(chunk);
+                
+                // 마지막 청크가 아니면 계속 누적
+                if (!last) {
+                    return WebSocket.Listener.super.onBinary(webSocket, data, last);
+                }
+                
+                // 마지막 청크면 버퍼 전체를 처리
+                String fullMessage = messageBuffer.toString();
+                messageBuffer.setLength(0); // 버퍼 초기화
+                
                 lastMessageTime = System.currentTimeMillis();
+                
+                // 개행 문자로 여러 메시지 분리 (업비트는 여러 티커를 개행으로 구분)
+                String[] messages = fullMessage.split("\n");
+                
+                for (String json : messages) {
+                    if (json.trim().isEmpty()) continue;
+                    
+                    try {
+                        processTickerMessage(json.trim());
+                    } catch (Exception e) {
+                        // 개별 메시지 파싱 실패는 로그만 출력하고 계속 진행
+                        System.err.println("⚠️ 티커 메시지 파싱 실패: " + e.getMessage());
+                        // 디버깅용: 문제가 되는 메시지 첫 100자만 출력
+                        if (json.length() > 100) {
+                            System.err.println("  메시지 샘플: " + json.substring(0, 100) + "...");
+                        } else {
+                            System.err.println("  메시지: " + json);
+                        }
+                    }
+                }
 
-                JsonNode obj = objectMapper.readTree(json);
-                String type = obj.path("type").asText();
-                if ("ticker".equals(type)) {
+            } catch (Exception e) {
+                System.err.println("❌ onBinary 처리 오류: " + e.getMessage());
+            }
+            return WebSocket.Listener.super.onBinary(webSocket, data, last);
+        }
+        
+        /**
+         * 티커 메시지 처리
+         */
+        private void processTickerMessage(String json) throws Exception {
+            JsonNode obj = objectMapper.readTree(json);
+            String type = obj.path("type").asText();
+            if ("ticker".equals(type)) {
                     String market = obj.path("code").asText();
                     double tradePrice = obj.path("trade_price").asDouble();
 
-                    System.out.println("📡 현재가 (" + market + "): " + tradePrice);
+                    // 이전 가격과 비교하여 1% 이상 변동이 있을 때만 로그 출력
+                    Double previousPrice = currentPrices.get(market);
+                    if (previousPrice != null) {
+                        double changePercent = Math.abs((tradePrice - previousPrice) / previousPrice) * 100;
+                        if (changePercent >= 1.0) {
+                            System.out.println("📡 현재가 (" + market + "): " + tradePrice + 
+                                " (변동: " + String.format("%.2f", changePercent) + "%)");
+                        }
+                    }
 
                     // 현재가 갱신
                     currentPrices.put(market, tradePrice);
@@ -315,11 +375,6 @@ public class UpbitWebSocketClient {
                     // 포트폴리오 트리거 체크 (전체 수익률 1% 이상 시 전량 매도 후 재매수)
                     maybeCheckPortfolioTrigger();
                 }
-
-            } catch (Exception e) {
-                System.err.println("❌ onBinary 처리 오류: " + e.getMessage());
-            }
-            return WebSocket.Listener.super.onBinary(webSocket, data, last);
         }
 
         @Override
