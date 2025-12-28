@@ -35,11 +35,11 @@ public class UpbitWebSocketClient {
     private volatile long lastTriggerAt = 0L;
     private volatile long lastPortfolioCheckAt = 0L; // 포트폴리오 체크 쿨다운용
 
-    // 근사 수수료율(0.05%), 최소 주문금액, 쿨다운(1분), 포트폴리오 체크 간격(10초)
+    // 근사 수수료율(0.05%), 최소 주문금액, 쿨다운(1분), 포트폴리오 체크 간격(20초)
     private static final double FEE_RATE = 0.0005;
     private static final int MIN_ORDER_KRW = 5000;
     private static final long COOLDOWN_MS = 60_000L;
-    private static final long PORTFOLIO_CHECK_INTERVAL_MS = 20_000L; // 10초마다 체크
+    private static final long PORTFOLIO_CHECK_INTERVAL_MS = 20_000L; // 20초마다 체크
 
     private volatile long lastMessageTime = 0;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
