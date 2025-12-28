@@ -7,7 +7,6 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
@@ -65,6 +64,12 @@ public class UpbitController {
     @GetMapping("/auto/status")
     public String getAutoTradingStatus() {
         return webSocketClient.status();
+    }
+
+    // 현재 가격 정보 조회
+    @GetMapping("/prices")
+    public java.util.Map<String, Double> getCurrentPrices() {
+        return webSocketClient.getCurrentPrices();
     }
 }
 

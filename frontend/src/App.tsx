@@ -19,6 +19,7 @@ function App() {
     const [lastAction, setLastAction] = useState<string>("-");
     const [logs, setLogs] = useState<LogItem[]>([]);
     const pollRef = useRef<number | null>(null);
+    const priceCheckRef = useRef<number | null>(null);
 
     const addLog = (message: string) => {
         const ts = new Date().toLocaleString();
@@ -155,14 +156,52 @@ function App() {
         }
     };
 
+    const fetchPrices = async () => {
+        try {
+            const data = await apiJson("/api/upbit/prices") as Record<string, number>;
+            if (data && Object.keys(data).length > 0) {
+                const priceList = Object.entries(data)
+                    .map(([market, price]) => `${market}: ${price.toLocaleString('ko-KR')}원`)
+                    .join(", ");
+                addLog(`📊 가격 정보: ${priceList}`);
+            }
+        } catch (e: unknown) {
+            // 가격 조회 실패는 조용히 무시 (자동매매가 실행 중이 아닐 수 있음)
+        }
+    };
+
+    const schedulePriceCheck = () => {
+        const now = new Date();
+        const seconds = now.getSeconds();
+        const milliseconds = now.getMilliseconds();
+        
+        // 다음 정각(00초)까지 남은 시간 계산
+        const msUntilNextMinute = (60 - seconds) * 1000 - milliseconds;
+        
+        // 다음 정각에 실행하고, 이후 매 분마다 실행
+        const timeoutId = window.setTimeout(() => {
+            fetchPrices();
+            // 매 분마다 실행
+            priceCheckRef.current = window.setInterval(fetchPrices, 60000);
+        }, msUntilNextMinute);
+        
+        return timeoutId;
+    };
+
     useEffect(() => {
         // 최초 1회 상태 조회
         fetchStatus();
 
         // 5초마다 상태 폴링
         pollRef.current = window.setInterval(fetchStatus, 5000);
+        
+        // 매 분 정각(00초)에 가격 정보 조회
+        const initialTimeoutId = schedulePriceCheck();
+        
         return () => {
             if (pollRef.current) window.clearInterval(pollRef.current);
+            if (priceCheckRef.current) window.clearInterval(priceCheckRef.current);
+            window.clearTimeout(initialTimeoutId);
         };
     }, []);
 

@@ -104,6 +104,13 @@ public class UpbitWebSocketClient {
     }
 
     /**
+     * 현재 가격 정보 반환 (Frontend용)
+     */
+    public Map<String, Double> getCurrentPrices() {
+        return new HashMap<>(currentPrices);
+    }
+
+    /**
      * 업비트 계정 조회 API로 lastBuyPrices 초기화
      */
     private void syncLastBuyPrices() {
