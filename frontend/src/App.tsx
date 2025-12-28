@@ -172,18 +172,28 @@ function App() {
 
     const schedulePriceCheck = () => {
         const now = new Date();
+        const minutes = now.getMinutes();
         const seconds = now.getSeconds();
         const milliseconds = now.getMilliseconds();
         
-        // 다음 정각(00초)까지 남은 시간 계산
-        const msUntilNextMinute = (60 - seconds) * 1000 - milliseconds;
+        // 30분 간격으로 다음 실행 시간 계산
+        const minutesRemainder = minutes % 30;
+        let minutesUntilNext = 30 - minutesRemainder;
         
-        // 다음 정각에 실행하고, 이후 매 분마다 실행
+        // 현재가 정확히 30분 경계(00분 또는 30분)이고 초가 0이면 다음 30분 후
+        if (minutesRemainder === 0 && seconds === 0 && milliseconds < 100) {
+            minutesUntilNext = 30;
+        }
+        
+        // 다음 30분 경계까지 남은 시간 계산 (밀리초 단위)
+        const msUntilNext = (minutesUntilNext * 60 - seconds) * 1000 - milliseconds;
+        
+        // 다음 30분 경계에 실행하고, 이후 매 30분마다 실행
         const timeoutId = window.setTimeout(() => {
             fetchPrices();
-            // 매 분마다 실행
-            priceCheckRef.current = window.setInterval(fetchPrices, 60000);
-        }, msUntilNextMinute);
+            // 매 30분마다 실행 (30분 = 1,800,000 밀리초)
+            priceCheckRef.current = window.setInterval(fetchPrices, 30 * 60 * 1000);
+        }, msUntilNext);
         
         return timeoutId;
     };
