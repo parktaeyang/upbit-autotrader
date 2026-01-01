@@ -156,22 +156,23 @@ public class UpbitService {
     }
 
     /**
-     * 업비트 캔들 데이터 조회 (인증 불필요 - Public API)
+     * 분봉 데이터 조회 (RSI 계산용)
+     * 업비트 API: GET /v1/candles/minutes/{unit}?market={market}&count={count}
      * 
-     * @param market 마켓 코드 (예: "KRW-BTC")
-     * @param unit 캔들 단위 (minutes, days, weeks, months)
-     * @param count 조회할 캔들 개수 (최대 200)
-     * @return 캔들 데이터 리스트 (최신순)
+     * @param market 마켓 코드
+     * @param minutes 분봉 단위 (1, 3, 5, 15, 30, 60, 240)
+     * @param count 조회할 캔들 개수 (RSI 14기간이면 최소 15개 이상 권장)
+     * @return 캔들 데이터 리스트
      */
-    public List<CandleDto> getCandles(String market, String unit, int count) {
+    public List<CandleDto> getMinuteCandles(String market, int minutes, int count) {
         try {
             // Public API이므로 인증 불필요
             CandleDto[] response = webClient.get()
                     .uri(uriBuilder -> uriBuilder
-                            .path("/v1/candles/{unit}")
+                            .path("/v1/candles/minutes/{unit}")
                             .queryParam("market", market)
                             .queryParam("count", count)
-                            .build(unit))
+                            .build(minutes))
                     .retrieve()
                     .bodyToMono(CandleDto[].class)
                     .block();
@@ -185,25 +186,31 @@ public class UpbitService {
     }
 
     /**
-     * 분봉 데이터 조회 (RSI 계산용)
-     * 
-     * @param market 마켓 코드
-     * @param minutes 분봉 단위 (1, 3, 5, 15, 30, 60, 240)
-     * @param count 조회할 캔들 개수 (RSI 14기간이면 최소 15개 이상 권장)
-     * @return 캔들 데이터 리스트
-     */
-    public List<CandleDto> getMinuteCandles(String market, int minutes, int count) {
-        return getCandles(market, "minutes/" + minutes, count);
-    }
-
-    /**
      * 일봉 데이터 조회
+     * 업비트 API: GET /v1/candles/days?market={market}&count={count}
      * 
      * @param market 마켓 코드
      * @param count 조회할 캔들 개수
      * @return 캔들 데이터 리스트
      */
     public List<CandleDto> getDayCandles(String market, int count) {
-        return getCandles(market, "days", count);
+        try {
+            // Public API이므로 인증 불필요
+            CandleDto[] response = webClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/v1/candles/days")
+                            .queryParam("market", market)
+                            .queryParam("count", count)
+                            .build())
+                    .retrieve()
+                    .bodyToMono(CandleDto[].class)
+                    .block();
+
+            return response != null ? Arrays.asList(response) : List.of();
+        } catch (Exception e) {
+            System.err.println("❌ 캔들 데이터 조회 실패: " + market + " - " + e.getMessage());
+            e.printStackTrace();
+            return List.of();
+        }
     }
 }
