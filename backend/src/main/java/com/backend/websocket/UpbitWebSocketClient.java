@@ -1,7 +1,8 @@
 package com.backend.websocket;
 
-import com.backend.dto.AccountDto;
+import com.backend.dto.CandleDto;
 import com.backend.service.UpbitService;
+import com.backend.util.RsiCalculator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
@@ -16,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Component
 public class UpbitWebSocketClient {
@@ -30,16 +32,18 @@ public class UpbitWebSocketClient {
     // 현재가 저장 (market → current price)
     private final Map<String, Double> currentPrices = new ConcurrentHashMap<>();
 
-    // 리밸런싱 재진입 방지 및 쿨다운
-    private volatile boolean isRebalancing = false;
-    private volatile long lastTriggerAt = 0L;
-    private volatile long lastPortfolioCheckAt = 0L; // 포트폴리오 체크 쿨다운용
-
-    // 근사 수수료율(0.05%), 최소 주문금액, 쿨다운(1분), 포트폴리오 체크 간격(20초)
-    private static final double FEE_RATE = 0.0005;
-    private static final int MIN_ORDER_KRW = 5000;
-    private static final long COOLDOWN_MS = 60_000L;
-    private static final long PORTFOLIO_CHECK_INTERVAL_MS = 20_000L; // 20초마다 체크
+    // RSI 기반 매매 설정
+    private static final double RSI_OVERSOLD = 30.0;  // 과매도 구간 (매수 신호)
+    private static final double RSI_OVERBOUGHT = 70.0; // 과매수 구간 (매도 신호)
+    private static final int RSI_PERIOD = 14; // RSI 계산 기간
+    private static final int CANDLE_MINUTES = 5; // 분봉 단위 (5분봉)
+    private static final int CANDLE_COUNT = 30; // 조회할 캔들 개수 (RSI 계산용)
+    
+    // 매매 쿨다운 및 제한
+    private final Map<String, Long> lastRsiCheckTime = new ConcurrentHashMap<>(); // 마켓별 마지막 RSI 체크 시간
+    private final Map<String, Double> lastRsiValue = new ConcurrentHashMap<>(); // 마켓별 마지막 RSI 값
+    private static final long RSI_CHECK_COOLDOWN_MS = 60_000L; // RSI 체크 쿨다운 (1분)
+    private static final int MIN_ORDER_KRW = 5000; // 최소 주문 금액
 
     private volatile long lastMessageTime = 0;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
@@ -111,7 +115,7 @@ public class UpbitWebSocketClient {
     }
 
     /**
-     * 업비트 계정 조회 API로 lastBuyPrices 초기화
+     * 업비트 계정 조회 API로 보유 코인 정보 초기화
      */
     private void syncLastBuyPrices() {
         try {
@@ -134,10 +138,10 @@ public class UpbitWebSocketClient {
                 }
             });
 
-            System.out.println("🔄 lastBuyPrices 동기화 완료: " + lastBuyPrices);
+            System.out.println("🔄 보유 코인 동기화 완료: " + lastBuyPrices);
 
         } catch (Exception e) {
-            System.err.println("❌ lastBuyPrices 동기화 실패: " + e.getMessage());
+            System.err.println("❌ 보유 코인 동기화 실패: " + e.getMessage());
         }
     }
 
@@ -161,117 +165,69 @@ public class UpbitWebSocketClient {
     }
 
     /**
-     * 전체 포트폴리오 수익률이 1% 이상이면 전량 매도 후 균등 재매수
-     * - 대상: 현재 보유중인 코인만 (balance > 0)
-     * - 수수료 근사 반영
-     * - 쿨다운 1분
-     * - API 호출 제한: 20초마다 accounts 조회 (rate limit 방지)
+     * RSI 기반 매매 신호 체크
+     * - RSI 30 이하: 과매도 → 매수 신호
+     * - RSI 70 이상: 과매수 → 매도 신호
      */
-    private void maybeCheckPortfolioTrigger() {
+    private void checkRsiAndTrade(String market) {
         long now = System.currentTimeMillis();
-        if (isRebalancing) return;
-        if (now - lastTriggerAt < COOLDOWN_MS) return;
         
-        // API 호출 rate limit 방지: 마지막 체크 후 20초가 지나지 않았으면 스킵
-        if (now - lastPortfolioCheckAt < PORTFOLIO_CHECK_INTERVAL_MS) return;
-        lastPortfolioCheckAt = now;
-
-        try {
-            var accounts = upbitService.getAccounts();
-
-            // 보유중인 코인만 대상 (KRW 제외)
-            List<AccountDto> holding = new ArrayList<>();
-            for (var acc : accounts) {
-                if ("KRW".equalsIgnoreCase(acc.getCurrency())) continue;
-                try {
-                    double balance = Double.parseDouble(acc.getBalance());
-                    if (balance > 0.0) {
-                        holding.add(acc);
-                    }
-                } catch (NumberFormatException ignore) {}
-            }
-            if (holding.isEmpty()) return;
-
-            double evalSum = 0.0;
-            double costSum = 0.0;
-            for (var acc : holding) {
-                String market = "KRW-" + acc.getCurrency();
-                Double price = currentPrices.get(market);
-                if (price == null) continue; // 아직 가격 미수신 시 제외
-                double balance = safeParse(acc.getBalance());
-                double avg = safeParse(acc.getAvgBuyPrice());
-                // 수수료 근사: 평가금액은 매도 수수료 차감, 원가는 매수 수수료 가산
-                evalSum += price * balance * (1 - FEE_RATE);
-                costSum += avg * balance * (1 + FEE_RATE);
-            }
-
-            if (costSum <= 0.0) return;
-            double pnl = evalSum / costSum - 1.0;
-            if (pnl >= 0.01) {
-                // 트리거 발동
-                isRebalancing = true;
-                System.out.println("🚨 포트폴리오 수익률 트리거 발동: " + String.format("%.4f", pnl * 100) + "%");
-                rebalanceAll();
-                lastTriggerAt = System.currentTimeMillis();
-                isRebalancing = false;
-            }
-        } catch (Exception e) {
-            System.err.println("❌ 포트폴리오 트리거 오류: " + e.getMessage());
-            isRebalancing = false;
+        // 쿨다운 체크
+        Long lastCheck = lastRsiCheckTime.get(market);
+        if (lastCheck != null && now - lastCheck < RSI_CHECK_COOLDOWN_MS) {
+            return; // 쿨다운 중이면 스킵
         }
-    }
+        lastRsiCheckTime.put(market, now);
 
-    private double safeParse(String s) {
-        try { return Double.parseDouble(s); } catch (Exception e) { return 0.0; }
-    }
-
-    /**
-     * 전량 매도 후 균등 재매수(시장가)
-     * - 최소 주문금액 미만은 건너뜀
-     */
-    private void rebalanceAll() {
         try {
-            // 1) 현재 보유 코인 전량 매도
-            var accounts = upbitService.getAccounts();
-            List<String> heldMarkets = new ArrayList<>();
-            for (var acc : accounts) {
-                if ("KRW".equalsIgnoreCase(acc.getCurrency())) continue;
-                double balance = safeParse(acc.getBalance());
-                if (balance <= 0.0) continue;
-                String market = "KRW-" + acc.getCurrency();
-                heldMarkets.add(market);
-                try {
+            // 캔들 데이터 조회
+            List<CandleDto> candles = upbitService.getMinuteCandles(market, CANDLE_MINUTES, CANDLE_COUNT);
+            if (candles.size() < RSI_PERIOD + 1) {
+                System.out.println("⚠️ " + market + ": RSI 계산을 위한 충분한 캔들 데이터가 없습니다. (필요: " + 
+                    (RSI_PERIOD + 1) + ", 현재: " + candles.size() + ")");
+                return;
+            }
+
+            // 종가 리스트 추출 (최신순이므로 그대로 사용)
+            List<Double> prices = candles.stream()
+                    .map(CandleDto::getTradePrice)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            // RSI 계산
+            double rsi = RsiCalculator.calculateRsi(prices, RSI_PERIOD);
+            lastRsiValue.put(market, rsi);
+
+            System.out.println("📊 " + market + " RSI: " + String.format("%.2f", rsi));
+
+            // 매매 로직
+            String currency = market.split("-")[1];
+            double balance = upbitService.getBalance(currency);
+            double krwBalance = upbitService.getBalance("KRW");
+
+            // RSI 30 이하: 과매도 → 매수 신호
+            if (rsi <= RSI_OVERSOLD) {
+                if (balance == 0 && krwBalance > MIN_ORDER_KRW) {
+                    // 보유하지 않은 경우 매수
+                    double buyAmount = krwBalance / markets.size(); // 잔액을 종목 수로 나눔
+                    if (buyAmount >= MIN_ORDER_KRW) {
+                        upbitService.buyMarketOrder(market, buyAmount);
+                        System.out.println("🟢 매수 신호 (RSI " + String.format("%.2f", rsi) + " ≤ " + RSI_OVERSOLD + "): " + market);
+                    }
+                }
+            }
+            // RSI 70 이상: 과매수 → 매도 신호
+            else if (rsi >= RSI_OVERBOUGHT) {
+                if (balance > 0) {
+                    // 보유 중인 경우 매도
                     upbitService.sellMarketOrder(market, balance);
-                    System.out.println("🧾 전량 매도: " + market + " vol=" + balance);
-                } catch (Exception e) {
-                    System.err.println("⚠️ 매도 실패: " + market + " - " + e.getMessage());
+                    System.out.println("🔴 매도 신호 (RSI " + String.format("%.2f", rsi) + " ≥ " + RSI_OVERBOUGHT + "): " + market);
                 }
             }
 
-            if (heldMarkets.isEmpty()) return;
-
-            // 간단 대기(체결 고려). 필요 시 체결 조회로 대체 가능
-            try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
-
-            // 2) KRW 잔액 균등 분배로 재매수
-            double krw = upbitService.getBalance("KRW");
-            double budget = krw * (1 - FEE_RATE); // 수수료 버퍼
-            int n = heldMarkets.size();
-            double per = (n > 0) ? (budget / n) : 0.0;
-            for (String market : heldMarkets) {
-                if (per < MIN_ORDER_KRW) {
-                    System.out.println("⏭ 최소금액 미만, 건너뜀: " + market + " per=" + per);
-                    continue;
-                }
-                try {
-                    upbitService.buyMarketOrder(market, per);
-                    System.out.println("🧾 재매수: " + market + " krw=" + per);
-                } catch (Exception e) {
-                    System.err.println("⚠️ 매수 실패: " + market + " - " + e.getMessage());
-                }
-            }
         } catch (Exception e) {
-            System.err.println("❌ 리밸런싱 오류: " + e.getMessage());
+            System.err.println("❌ RSI 체크 오류 (" + market + "): " + e.getMessage());
+            e.printStackTrace();
         }
     }
     /**
@@ -357,30 +313,8 @@ public class UpbitWebSocketClient {
                     // 현재가 갱신
                     currentPrices.put(market, tradePrice);
 
-                    Double lastBuyPrice = lastBuyPrices.get(market);
-                    if (lastBuyPrice == null) {
-                        // 처음 매수 → 잔액 분배 매수
-                        double krwBalance = upbitService.getBalance("KRW");
-                        if (krwBalance > 1000) {
-                            upbitService.buyMarketOrder(market, krwBalance / markets.size());
-                            lastBuyPrices.put(market, tradePrice);
-                            System.out.println("✅ 초기 매수 완료: " + market + " @ " + tradePrice);
-                        }
-                    } else {
-                        // 매수 후 1% 상승 시 매도
-                        double targetPrice = lastBuyPrice * 1.01;
-                        if (tradePrice >= targetPrice) {
-                            double volume = upbitService.getBalance(market.split("-")[1]);
-                            if (volume > 0) {
-                                upbitService.sellMarketOrder(market, volume);
-                                lastBuyPrices.remove(market);
-                                System.out.println("💰 매도 완료: " + market + " 수익 실현!");
-                            }
-                        }
-                    }
-
-                    // 포트폴리오 트리거 체크 (전체 수익률 1% 이상 시 전량 매도 후 재매수)
-                    maybeCheckPortfolioTrigger();
+                    // RSI 기반 매매 신호 체크
+                    checkRsiAndTrade(market);
                 }
         }
 
