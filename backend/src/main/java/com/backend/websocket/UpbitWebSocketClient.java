@@ -205,15 +205,32 @@ public class UpbitWebSocketClient {
             double balance = upbitService.getBalance(currency);
             double krwBalance = upbitService.getBalance("KRW");
 
+            // 디버깅 정보 출력
+            if (rsi <= RSI_OVERSOLD || rsi >= RSI_OVERBOUGHT) {
+                System.out.println("🔍 " + market + " 상태 - RSI: " + String.format("%.2f", rsi) + 
+                    ", 보유량: " + balance + ", KRW잔액: " + String.format("%.0f", krwBalance));
+            }
+
             // RSI 30 이하: 과매도 → 매수 신호
             if (rsi <= RSI_OVERSOLD) {
-                if (balance == 0 && krwBalance > MIN_ORDER_KRW) {
-                    // 보유하지 않은 경우 매수
-                    double buyAmount = krwBalance / markets.size(); // 잔액을 종목 수로 나눔
-                    if (buyAmount >= MIN_ORDER_KRW) {
-                        upbitService.buyMarketOrder(market, buyAmount);
-                        System.out.println("🟢 매수 신호 (RSI " + String.format("%.2f", rsi) + " ≤ " + RSI_OVERSOLD + "): " + market);
+                if (balance == 0) {
+                    if (krwBalance > MIN_ORDER_KRW) {
+                        // 보유하지 않은 경우 매수
+                        double buyAmount = krwBalance / markets.size(); // 잔액을 종목 수로 나눔
+                        if (buyAmount >= MIN_ORDER_KRW) {
+                            upbitService.buyMarketOrder(market, buyAmount);
+                            System.out.println("🟢 매수 신호 (RSI " + String.format("%.2f", rsi) + " ≤ " + RSI_OVERSOLD + "): " + market + 
+                                " - 매수금액: " + String.format("%.0f", buyAmount) + " KRW");
+                        } else {
+                            System.out.println("⚠️ " + market + ": 매수금액이 최소주문금액(" + MIN_ORDER_KRW + "원) 미만입니다. (계산된 금액: " + 
+                                String.format("%.0f", buyAmount) + "원)");
+                        }
+                    } else {
+                        System.out.println("⚠️ " + market + ": KRW 잔액이 부족합니다. (현재: " + 
+                            String.format("%.0f", krwBalance) + "원, 필요: " + MIN_ORDER_KRW + "원 이상)");
                     }
+                } else {
+                    System.out.println("ℹ️ " + market + ": 이미 보유 중입니다. (보유량: " + balance + ")");
                 }
             }
             // RSI 70 이상: 과매수 → 매도 신호
@@ -222,6 +239,8 @@ public class UpbitWebSocketClient {
                     // 보유 중인 경우 매도
                     upbitService.sellMarketOrder(market, balance);
                     System.out.println("🔴 매도 신호 (RSI " + String.format("%.2f", rsi) + " ≥ " + RSI_OVERBOUGHT + "): " + market);
+                } else {
+                    System.out.println("ℹ️ " + market + ": 보유하지 않아 매도할 수 없습니다.");
                 }
             }
 
