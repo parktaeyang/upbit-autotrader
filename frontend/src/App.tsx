@@ -5,6 +5,13 @@ const API_BASE =
 
 type LogItem = { ts: string; message: string };
 
+interface TradeNotification {
+    message: string;
+    type: string; // "BUY", "SELL", "INFO", "WARNING", "ERROR"
+    timestamp: string;
+    market: string;
+}
+
 function App() {
     const [statusText, setStatusText] = useState<string>("Loading...");
     const [busy, setBusy] = useState<boolean>(false);
@@ -18,8 +25,10 @@ function App() {
     const [accounts, setAccounts] = useState<Account[] | null>(null);
     const [lastAction, setLastAction] = useState<string>("-");
     const [logs, setLogs] = useState<LogItem[]>([]);
+    const [notifications, setNotifications] = useState<TradeNotification[]>([]);
     const pollRef = useRef<number | null>(null);
     const priceCheckRef = useRef<number | null>(null);
+    const notificationPollRef = useRef<number | null>(null);
 
     const addLog = (message: string) => {
         const ts = new Date().toLocaleString();
@@ -170,6 +179,17 @@ function App() {
         }
     };
 
+    const fetchNotifications = async () => {
+        try {
+            const data = await apiJson("/api/upbit/notifications") as TradeNotification[];
+            if (data && Array.isArray(data)) {
+                setNotifications(data);
+            }
+        } catch (e: unknown) {
+            // 알림 조회 실패는 조용히 무시
+        }
+    };
+
     const schedulePriceCheck = () => {
         const now = new Date();
         const minutes = now.getMinutes();
@@ -208,9 +228,16 @@ function App() {
         // 매 분 정각(00초)에 가격 정보 조회
         const initialTimeoutId = schedulePriceCheck();
         
+        // 최초 1회 알림 조회
+        fetchNotifications();
+        
+        // 2초마다 알림 폴링 (매매 알림이 빈번할 수 있음)
+        notificationPollRef.current = window.setInterval(fetchNotifications, 2000);
+        
         return () => {
             if (pollRef.current) window.clearInterval(pollRef.current);
             if (priceCheckRef.current) window.clearInterval(priceCheckRef.current);
+            if (notificationPollRef.current) window.clearInterval(notificationPollRef.current);
             window.clearTimeout(initialTimeoutId);
         };
     }, []);
@@ -271,6 +298,52 @@ function App() {
                         <pre style={styles.pre}>{JSON.stringify(accounts, null, 2)}</pre>
                     ) : (
                         <p style={{ margin: 0, color: "#888" }}>조회된 정보가 없습니다.</p>
+                    )}
+                </div>
+            </section>
+
+            <section style={styles.section}>
+                <h2>매매 알림</h2>
+                <div style={{ ...styles.card, maxHeight: 300, overflow: "auto" }}>
+                    {notifications.length === 0 ? (
+                        <p style={{ margin: 0, color: "#888" }}>알림이 없습니다.</p>
+                    ) : (
+                        <ul style={{ paddingLeft: 16, margin: 0 }}>
+                            {notifications.map((notif, i) => {
+                                const getTypeColor = (type: string) => {
+                                    switch (type) {
+                                        case "BUY": return "#28a745";
+                                        case "SELL": return "#dc3545";
+                                        case "WARNING": return "#ffc107";
+                                        case "ERROR": return "#dc3545";
+                                        default: return "#6c757d";
+                                    }
+                                };
+                                const timestamp = notif.timestamp ? new Date(notif.timestamp).toLocaleString('ko-KR') : '';
+                                return (
+                                    <li key={i} style={{ marginBottom: 8, listStyle: "none" }}>
+                                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                                            <span style={{ 
+                                                color: getTypeColor(notif.type), 
+                                                fontWeight: "bold",
+                                                fontSize: "12px",
+                                                minWidth: "60px"
+                                            }}>
+                                                [{notif.type}]
+                                            </span>
+                                            <div style={{ flex: 1 }}>
+                                                {timestamp && (
+                                                    <code style={{ color: "#6c757d", fontSize: "11px" }}>
+                                                        [{timestamp}]
+                                                    </code>
+                                                )}
+                                                <span style={{ marginLeft: 8 }}>{notif.message}</span>
+                                            </div>
+                                        </div>
+                                    </li>
+                                );
+                            })}
+                        </ul>
                     )}
                 </div>
             </section>
