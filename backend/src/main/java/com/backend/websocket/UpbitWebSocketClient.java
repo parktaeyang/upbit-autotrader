@@ -34,8 +34,8 @@ public class UpbitWebSocketClient {
     private final Map<String, Double> currentPrices = new ConcurrentHashMap<>();
 
     // RSI 기반 매매 설정
-    private static final double RSI_OVERSOLD = 30.0;  // 과매도 구간 (매수 신호)
-    private static final double RSI_OVERBOUGHT = 70.0; // 과매수 구간 (매도 신호)
+    private static final double RSI_OVERSOLD = 40.0;  // 과매도 구간 (매수 신호)
+    private static final double RSI_OVERBOUGHT = 65.0; // 과매수 구간 (매도 신호)
     private static final int RSI_PERIOD = 14; // RSI 계산 기간
     private static final int CANDLE_MINUTES = 5; // 분봉 단위 (5분봉)
     private static final int CANDLE_COUNT = 30; // 조회할 캔들 개수 (RSI 계산용)
