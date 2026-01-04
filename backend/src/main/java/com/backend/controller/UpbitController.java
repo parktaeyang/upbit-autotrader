@@ -71,6 +71,12 @@ public class UpbitController {
     public java.util.Map<String, Double> getCurrentPrices() {
         return webSocketClient.getCurrentPrices();
     }
+
+    // 매매 알림 조회
+    @GetMapping("/notifications")
+    public java.util.List<com.backend.dto.TradeNotification> getNotifications() {
+        return webSocketClient.getNotifications();
+    }
 }
 
 

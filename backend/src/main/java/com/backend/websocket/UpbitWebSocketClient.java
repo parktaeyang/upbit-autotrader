@@ -1,6 +1,7 @@
 package com.backend.websocket;
 
 import com.backend.dto.CandleDto;
+import com.backend.dto.TradeNotification;
 import com.backend.service.UpbitService;
 import com.backend.util.RsiCalculator;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -44,11 +45,15 @@ public class UpbitWebSocketClient {
     private final Map<String, Double> lastRsiValue = new ConcurrentHashMap<>(); // 마켓별 마지막 RSI 값
     private static final long RSI_CHECK_COOLDOWN_MS = 60_000L; // RSI 체크 쿨다운 (1분)
     private static final int MIN_ORDER_KRW = 5000; // 최소 주문 금액
+    private static final int MAX_NOTIFICATIONS = 200; // 최대 알림 개수
 
     private volatile long lastMessageTime = 0;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    
+    // 알림 저장 리스트 (최근 알림만 유지)
+    private final List<TradeNotification> notifications = Collections.synchronizedList(new ArrayList<>());
 
     public UpbitWebSocketClient(UpbitService upbitService) {
         this.upbitService = upbitService;
@@ -112,6 +117,30 @@ public class UpbitWebSocketClient {
      */
     public Map<String, Double> getCurrentPrices() {
         return new HashMap<>(currentPrices);
+    }
+
+    /**
+     * 알림 추가 (동시성 안전)
+     */
+    private void addNotification(String message, String type, String market) {
+        synchronized (notifications) {
+            notifications.add(0, new TradeNotification(message, type, market)); // 최신 알림을 앞에 추가
+            // 최대 개수 초과 시 오래된 알림 제거
+            if (notifications.size() > MAX_NOTIFICATIONS) {
+                notifications.remove(notifications.size() - 1);
+            }
+        }
+        // System.out.println도 유지 (콘솔 로그)
+        System.out.println(message);
+    }
+
+    /**
+     * 알림 목록 조회 (Frontend용)
+     */
+    public List<TradeNotification> getNotifications() {
+        synchronized (notifications) {
+            return new ArrayList<>(notifications);
+        }
     }
 
     /**
@@ -183,8 +212,9 @@ public class UpbitWebSocketClient {
             // 캔들 데이터 조회
             List<CandleDto> candles = upbitService.getMinuteCandles(market, CANDLE_MINUTES, CANDLE_COUNT);
             if (candles.size() < RSI_PERIOD + 1) {
-                System.out.println("⚠️ " + market + ": RSI 계산을 위한 충분한 캔들 데이터가 없습니다. (필요: " + 
-                    (RSI_PERIOD + 1) + ", 현재: " + candles.size() + ")");
+                String message = "⚠️ " + market + ": RSI 계산을 위한 충분한 캔들 데이터가 없습니다. (필요: " + 
+                    (RSI_PERIOD + 1) + ", 현재: " + candles.size() + ")";
+                addNotification(message, "WARNING", market);
                 return;
             }
 
@@ -198,7 +228,8 @@ public class UpbitWebSocketClient {
             double rsi = RsiCalculator.calculateRsi(prices, RSI_PERIOD);
             lastRsiValue.put(market, rsi);
 
-            System.out.println("📊 " + market + " RSI: " + String.format("%.2f", rsi));
+            String rsiMessage = "📊 " + market + " RSI: " + String.format("%.2f", rsi);
+            addNotification(rsiMessage, "INFO", market);
 
             // 매매 로직
             String currency = market.split("-")[1];
@@ -207,8 +238,9 @@ public class UpbitWebSocketClient {
 
             // 디버깅 정보 출력
             if (rsi <= RSI_OVERSOLD || rsi >= RSI_OVERBOUGHT) {
-                System.out.println("🔍 " + market + " 상태 - RSI: " + String.format("%.2f", rsi) + 
-                    ", 보유량: " + balance + ", KRW잔액: " + String.format("%.0f", krwBalance));
+                String debugMessage = "🔍 " + market + " 상태 - RSI: " + String.format("%.2f", rsi) + 
+                    ", 보유량: " + balance + ", KRW잔액: " + String.format("%.0f", krwBalance);
+                addNotification(debugMessage, "INFO", market);
             }
 
             // RSI 30 이하: 과매도 → 매수 신호
@@ -219,18 +251,22 @@ public class UpbitWebSocketClient {
                         double buyAmount = krwBalance / markets.size(); // 잔액을 종목 수로 나눔
                         if (buyAmount >= MIN_ORDER_KRW) {
                             upbitService.buyMarketOrder(market, buyAmount);
-                            System.out.println("🟢 매수 신호 (RSI " + String.format("%.2f", rsi) + " ≤ " + RSI_OVERSOLD + "): " + market + 
-                                " - 매수금액: " + String.format("%.0f", buyAmount) + " KRW");
+                            String buyMessage = "🟢 매수 신호 (RSI " + String.format("%.2f", rsi) + " ≤ " + RSI_OVERSOLD + "): " + market + 
+                                " - 매수금액: " + String.format("%.0f", buyAmount) + " KRW";
+                            addNotification(buyMessage, "BUY", market);
                         } else {
-                            System.out.println("⚠️ " + market + ": 매수금액이 최소주문금액(" + MIN_ORDER_KRW + "원) 미만입니다. (계산된 금액: " + 
-                                String.format("%.0f", buyAmount) + "원)");
+                            String warningMessage = "⚠️ " + market + ": 매수금액이 최소주문금액(" + MIN_ORDER_KRW + "원) 미만입니다. (계산된 금액: " + 
+                                String.format("%.0f", buyAmount) + "원)";
+                            addNotification(warningMessage, "WARNING", market);
                         }
                     } else {
-                        System.out.println("⚠️ " + market + ": KRW 잔액이 부족합니다. (현재: " + 
-                            String.format("%.0f", krwBalance) + "원, 필요: " + MIN_ORDER_KRW + "원 이상)");
+                        String warningMessage = "⚠️ " + market + ": KRW 잔액이 부족합니다. (현재: " + 
+                            String.format("%.0f", krwBalance) + "원, 필요: " + MIN_ORDER_KRW + "원 이상)";
+                        addNotification(warningMessage, "WARNING", market);
                     }
                 } else {
-                    System.out.println("ℹ️ " + market + ": 이미 보유 중입니다. (보유량: " + balance + ")");
+                    String infoMessage = "ℹ️ " + market + ": 이미 보유 중입니다. (보유량: " + balance + ")";
+                    addNotification(infoMessage, "INFO", market);
                 }
             }
             // RSI 70 이상: 과매수 → 매도 신호
@@ -238,14 +274,18 @@ public class UpbitWebSocketClient {
                 if (balance > 0) {
                     // 보유 중인 경우 매도
                     upbitService.sellMarketOrder(market, balance);
-                    System.out.println("🔴 매도 신호 (RSI " + String.format("%.2f", rsi) + " ≥ " + RSI_OVERBOUGHT + "): " + market);
+                    String sellMessage = "🔴 매도 신호 (RSI " + String.format("%.2f", rsi) + " ≥ " + RSI_OVERBOUGHT + "): " + market;
+                    addNotification(sellMessage, "SELL", market);
                 } else {
-                    System.out.println("ℹ️ " + market + ": 보유하지 않아 매도할 수 없습니다.");
+                    String infoMessage = "ℹ️ " + market + ": 보유하지 않아 매도할 수 없습니다.";
+                    addNotification(infoMessage, "INFO", market);
                 }
             }
 
         } catch (Exception e) {
-            System.err.println("❌ RSI 체크 오류 (" + market + "): " + e.getMessage());
+            String errorMessage = "❌ RSI 체크 오류 (" + market + "): " + e.getMessage();
+            addNotification(errorMessage, "ERROR", market);
+            System.err.println(errorMessage);
             e.printStackTrace();
         }
     }
