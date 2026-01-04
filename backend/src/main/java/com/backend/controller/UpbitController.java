@@ -29,7 +29,7 @@ public class UpbitController {
         this.upbitService = upbitService;
     }
 
-    List<String> markets = Arrays.asList("KRW-BTT", "KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-DOGE");
+    List<String> markets = Arrays.asList("KRW-BTC", "KRW-ETH", "KRW-XRP");
 
     @GetMapping("/accounts")
     public Mono<String> getAccounts() {
