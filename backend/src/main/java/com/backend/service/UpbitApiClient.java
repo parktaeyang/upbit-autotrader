@@ -1,5 +1,8 @@
 package com.backend.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -12,11 +15,15 @@ import reactor.core.publisher.Mono;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class UpbitApiClient {
 
     private static final Logger logger = LoggerFactory.getLogger(UpbitApiClient.class);
+    private static final Set<String> HIDDEN_CURRENCIES = Set.of("VTHO", "CHR");
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
     private final WebClient upbitWebClient;
     private final UpbitAuthService authService;
 
@@ -35,11 +42,27 @@ public class UpbitApiClient {
                 .accept(MediaType.APPLICATION_JSON)
                 .retrieve()
                 .bodyToMono(String.class)
+                .map(response -> {
+                    try {
+                        JsonNode root = objectMapper.readTree(response);
+                        ArrayNode filtered = objectMapper.createArrayNode();
+                        for (JsonNode node : root) {
+                            String currency = node.path("currency").asText();
+                            if (!HIDDEN_CURRENCIES.contains(currency.toUpperCase())) {
+                                filtered.add(node);
+                            }
+                        }
+                        return objectMapper.writeValueAsString(filtered);
+                    } catch (Exception e) {
+                        logger.warn("⚠️ 계좌 필터링 실패, 원본 반환: {}", e.getMessage());
+                        return response;
+                    }
+                })
                 .doOnSuccess(response -> logger.info("✅ 계좌 조회 성공: {}", response))
                 .doOnError(error -> {
                     if (error instanceof WebClientResponseException) {
                         WebClientResponseException ex = (WebClientResponseException) error;
-                        logger.error("❌ 업비트 API 오류 - Status: {}, Body: {}", 
+                        logger.error("❌ 업비트 API 오류 - Status: {}, Body: {}",
                                 ex.getStatusCode(), ex.getResponseBodyAsString());
                     } else {
                         logger.error("❌ 계좌 조회 실패: {}", error.getMessage(), error);

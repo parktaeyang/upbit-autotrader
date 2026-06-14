@@ -64,3 +64,6 @@ frontend/.env
 *.log
 *.iml
 .idea/
+
+### Local Notes ###
+local-notes/

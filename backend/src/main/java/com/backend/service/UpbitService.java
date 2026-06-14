@@ -39,7 +39,9 @@ public class UpbitService {
                 .bodyToMono(AccountDto[].class)
                 .block();
 
-        return Arrays.asList(response);
+        return Arrays.stream(response)
+                .filter(acc -> !acc.getCurrency().equalsIgnoreCase("VTHO") && !acc.getCurrency().equalsIgnoreCase("CHR"))
+                .toList();
     }
 
     public double getBalance(String currency) {
