@@ -2,8 +2,8 @@ package com.backend.websocket;
 
 import com.backend.config.TradingSettings;
 import com.backend.dto.CandleDto;
-import com.backend.dto.TradeNotification;
 import com.backend.dto.TradingSettingsDto;
+import com.backend.service.NotificationService;
 import com.backend.service.SseEmitterRegistry;
 import com.backend.service.UpbitService;
 import com.backend.util.RsiCalculator;
@@ -29,6 +29,7 @@ public class UpbitWebSocketClient {
     private final UpbitService upbitService;
     private final TradingSettings tradingSettings;
     private final SseEmitterRegistry sseEmitterRegistry;
+    private final NotificationService notificationService;
     private WebSocket webSocket;
 
     // 마지막 매수 단가 저장 (market → price)
@@ -41,21 +42,18 @@ public class UpbitWebSocketClient {
     // 매매 쿨다운 및 제한
     private final Map<String, Long> lastRsiCheckTime = new ConcurrentHashMap<>(); // 마켓별 마지막 RSI 체크 시간
     private final Map<String, Double> lastRsiValue = new ConcurrentHashMap<>(); // 마켓별 마지막 RSI 값
-    private static final int MAX_NOTIFICATIONS = 200; // 최대 알림 개수
 
     private volatile long lastMessageTime = 0;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // 알림 저장 리스트 (최근 알림만 유지)
-    private final List<TradeNotification> notifications = Collections.synchronizedList(new ArrayList<>());
-
     public UpbitWebSocketClient(UpbitService upbitService, TradingSettings tradingSettings,
-                                 SseEmitterRegistry sseEmitterRegistry) {
+                                 SseEmitterRegistry sseEmitterRegistry, NotificationService notificationService) {
         this.upbitService = upbitService;
         this.tradingSettings = tradingSettings;
         this.sseEmitterRegistry = sseEmitterRegistry;
+        this.notificationService = notificationService;
     }
 
     /**
@@ -128,29 +126,10 @@ public class UpbitWebSocketClient {
     }
 
     /**
-     * 알림 추가 (동시성 안전)
+     * 알림 추가
      */
     private void addNotification(String message, String type, String market) {
-        TradeNotification notification = new TradeNotification(message, type, market);
-        synchronized (notifications) {
-            notifications.add(0, notification); // 최신 알림을 앞에 추가
-            // 최대 개수 초과 시 오래된 알림 제거
-            if (notifications.size() > MAX_NOTIFICATIONS) {
-                notifications.remove(notifications.size() - 1);
-            }
-        }
-        // System.out.println도 유지 (콘솔 로그)
-        System.out.println(message);
-        sseEmitterRegistry.broadcastNotification(notification);
-    }
-
-    /**
-     * 알림 목록 조회 (Frontend용)
-     */
-    public List<TradeNotification> getNotifications() {
-        synchronized (notifications) {
-            return new ArrayList<>(notifications);
-        }
+        notificationService.add(message, type, market);
     }
 
     /**

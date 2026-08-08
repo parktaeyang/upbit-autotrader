@@ -1,6 +1,7 @@
 package com.backend.controller;
 
 import com.backend.config.TradingSettings;
+import com.backend.service.NotificationService;
 import com.backend.service.UpbitApiClient;
 import com.backend.service.UpbitService;
 import com.backend.websocket.UpbitWebSocketClient;
@@ -19,15 +20,18 @@ public class UpbitController {
     private final UpbitWebSocketClient webSocketClient;
     private final UpbitService upbitService;
     private final TradingSettings tradingSettings;
+    private final NotificationService notificationService;
 
     public UpbitController(UpbitApiClient upbitApiClient,
                            UpbitWebSocketClient webSocketClient,
                            UpbitService upbitService,
-                           TradingSettings tradingSettings) {
+                           TradingSettings tradingSettings,
+                           NotificationService notificationService) {
         this.upbitApiClient = upbitApiClient;
         this.webSocketClient = webSocketClient;
         this.upbitService = upbitService;
         this.tradingSettings = tradingSettings;
+        this.notificationService = notificationService;
     }
 
     @GetMapping("/accounts")
@@ -41,7 +45,7 @@ public class UpbitController {
         var markets = tradingSettings.current().markets();
         upbitService.buyMarketOrders(markets);
 
-        return "🚀 자동매매 뿐배 (대상 종목: " + markets + ")";
+        return "🚀 자동매매 분배 (대상 종목: " + markets + ")";
     }
 
     // 자동매매 시작
@@ -75,7 +79,7 @@ public class UpbitController {
     // 매매 알림 조회
     @GetMapping("/notifications")
     public java.util.List<com.backend.dto.TradeNotification> getNotifications() {
-        return webSocketClient.getNotifications();
+        return notificationService.getAll();
     }
 }
 

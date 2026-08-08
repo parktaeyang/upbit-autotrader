@@ -18,12 +18,14 @@ public class UpbitService {
 
     private final WebClient webClient = WebClient.create("https://api.upbit.com");
     private final UpbitJwtProvider jwtProvider;
+    private final NotificationService notificationService;
 
     // 테스트 모드 여부 (true면 실제 주문 안 날림)
     private final boolean testMode = false;
 
-    public UpbitService(com.backend.config.UpbitProperties props) {
+    public UpbitService(com.backend.config.UpbitProperties props, NotificationService notificationService) {
         this.jwtProvider = new UpbitJwtProvider(props.getAccessKey(), props.getSecretKey());
+        this.notificationService = notificationService;
     }
 
     /**
@@ -102,7 +104,9 @@ public class UpbitService {
 
         double balance = getBalance("KRW");
         if (balance <= 0) {
-            System.out.println("⚠️ KRW 잔액이 부족합니다.");
+            String warningMessage = "⚠️ 균등 분배 매수 실패: KRW 잔액이 부족합니다.";
+            System.out.println(warningMessage);
+            notificationService.add(warningMessage, "WARNING", String.join(",", markets));
             return;
         }
 
