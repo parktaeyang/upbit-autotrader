@@ -40,28 +40,32 @@ public class RsiCalculator {
             );
         }
         
-        // 초기 평균 상승폭/하락폭 계산 (첫 period 개의 변화량 사용)
+        // prices는 최신순(index 0이 가장 최근)이므로, 시간 순방향(과거→현재)으로
+        // 변화량을 처리하려면 리스트 뒤쪽(과거)부터 앞쪽(최신)으로 순회해야 한다.
+        int n = prices.size();
+
+        // 초기 평균 상승폭/하락폭 계산 (가장 오래된 period 개의 변화량 사용)
         double avgGain = 0.0;
         double avgLoss = 0.0;
-        
-        for (int i = 0; i < period; i++) {
-            double change = prices.get(i) - prices.get(i + 1); // 최신 - 이전
+
+        for (int i = n - 2; i >= n - 1 - period; i--) {
+            double change = prices.get(i) - prices.get(i + 1); // 이후 시점 - 이전 시점
             if (change > 0) {
                 avgGain += change;
             } else {
                 avgLoss += Math.abs(change);
             }
         }
-        
+
         avgGain /= period;
         avgLoss /= period;
-        
-        // 나머지 데이터로 지수 이동 평균 계산
-        for (int i = period; i < prices.size() - 1; i++) {
+
+        // 나머지 데이터를 과거→현재 순서로 적용하며 지수 이동 평균 계산
+        for (int i = n - 2 - period; i >= 0; i--) {
             double change = prices.get(i) - prices.get(i + 1);
             double gain = change > 0 ? change : 0.0;
             double loss = change < 0 ? Math.abs(change) : 0.0;
-            
+
             // Wilder's Smoothing Method (지수 이동 평균)
             avgGain = (avgGain * (period - 1) + gain) / period;
             avgLoss = (avgLoss * (period - 1) + loss) / period;

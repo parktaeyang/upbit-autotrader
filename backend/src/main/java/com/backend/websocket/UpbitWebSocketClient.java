@@ -42,6 +42,7 @@ public class UpbitWebSocketClient {
     // 매매 쿨다운 및 제한
     private final Map<String, Long> lastRsiCheckTime = new ConcurrentHashMap<>(); // 마켓별 마지막 RSI 체크 시간
     private final Map<String, Double> lastRsiValue = new ConcurrentHashMap<>(); // 마켓별 마지막 RSI 값
+    private final Map<String, String> lastProcessedCandleTime = new ConcurrentHashMap<>(); // 마켓별 마지막으로 판단한 확정봉 시각
 
     private volatile long lastMessageTime = 0;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
@@ -199,17 +200,32 @@ public class UpbitWebSocketClient {
         lastRsiCheckTime.put(market, now);
 
         try {
-            // 캔들 데이터 조회
+            // 캔들 데이터 조회 (index 0은 아직 마감되지 않은 진행 중인 봉이므로 신호 계산에서 제외)
             List<CandleDto> candles = upbitService.getMinuteCandles(market, settings.candleMinutes(), settings.candleCount());
-            if (candles.size() < settings.rsiPeriod() + 1) {
-                String message = "⚠️ " + market + ": RSI 계산을 위한 충분한 캔들 데이터가 없습니다. (필요: " +
-                    (settings.rsiPeriod() + 1) + ", 현재: " + candles.size() + ")";
+            if (candles.size() < 2) {
+                String message = "⚠️ " + market + ": 확정봉 데이터가 없습니다. (조회된 캔들: " + candles.size() + ")";
+                addNotification(message, "WARNING", market);
+                return;
+            }
+            List<CandleDto> confirmedCandles = candles.subList(1, candles.size());
+
+            if (confirmedCandles.size() < settings.rsiPeriod() + 1) {
+                String message = "⚠️ " + market + ": RSI 계산을 위한 확정봉 데이터가 부족합니다. (필요: " +
+                    (settings.rsiPeriod() + 1) + ", 현재: " + confirmedCandles.size() + ")";
                 addNotification(message, "WARNING", market);
                 return;
             }
 
+            // 같은 확정봉을 이미 판단했다면 스킵 (진행 중인 봉이 쿨다운 주기마다 반복 조회되며
+            // 아직 값이 바뀌지 않은 확정봉으로 중복 신호/알림이 나는 것을 방지)
+            String latestConfirmedCandleTime = confirmedCandles.get(0).getCandleDateTimeUtc();
+            if (latestConfirmedCandleTime.equals(lastProcessedCandleTime.get(market))) {
+                return;
+            }
+            lastProcessedCandleTime.put(market, latestConfirmedCandleTime);
+
             // 종가 리스트 추출 (최신순이므로 그대로 사용)
-            List<Double> prices = candles.stream()
+            List<Double> prices = confirmedCandles.stream()
                     .map(CandleDto::getTradePrice)
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
