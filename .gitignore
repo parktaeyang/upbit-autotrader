@@ -58,6 +58,7 @@ frontend/.idea/
 frontend/*.log
 frontend/.env.local
 frontend/.env
+frontend/*.tsbuildinfo
 
 ### Mac / OS ###
 .DS_Store
