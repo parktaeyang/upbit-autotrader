@@ -1,5 +1,6 @@
 package com.backend.service;
 
+import com.backend.config.TradingSettings;
 import com.backend.dto.AccountDto;
 import com.backend.dto.CandleDto;
 import com.backend.util.UpbitJwtProvider;
@@ -19,13 +20,16 @@ public class UpbitService {
     private final WebClient webClient = WebClient.create("https://api.upbit.com");
     private final UpbitJwtProvider jwtProvider;
     private final NotificationService notificationService;
+    private final TradingSettings tradingSettings;
 
     // 테스트 모드 여부 (true면 실제 주문 안 날림)
     private final boolean testMode = false;
 
-    public UpbitService(com.backend.config.UpbitProperties props, NotificationService notificationService) {
+    public UpbitService(com.backend.config.UpbitProperties props, NotificationService notificationService,
+                         TradingSettings tradingSettings) {
         this.jwtProvider = new UpbitJwtProvider(props.getAccessKey(), props.getSecretKey());
         this.notificationService = notificationService;
+        this.tradingSettings = tradingSettings;
     }
 
     /**
@@ -115,6 +119,15 @@ public class UpbitService {
 
         // 종목 수만큼 균등 분배
         double perMarket = usableBalance / markets.size();
+
+        int minOrderKrw = tradingSettings.current().minOrderKrw();
+        if (perMarket < minOrderKrw) {
+            String warningMessage = "⚠️ 균등 분배 매수 실패: 종목당 매수금액(" + String.format("%.0f", perMarket) +
+                "원)이 최소주문금액(" + minOrderKrw + "원) 미만입니다. (KRW 잔액: " + String.format("%.0f", balance) + "원)";
+            System.out.println(warningMessage);
+            notificationService.add(warningMessage, "WARNING", String.join(",", markets));
+            return;
+        }
 
         System.out.println("💰 총 잔액: " + balance + " KRW");
         System.out.println("📊 종목별 매수금액: " + perMarket + " KRW");
