@@ -87,7 +87,11 @@ function App() {
 
             <PricePanel prices={prices} />
 
-            <AccountPanel accounts={accounts} />
+            <AccountPanel
+                accounts={accounts}
+                prices={prices}
+                tradingMarkets={settingsState.settings?.markets ?? []}
+            />
 
             <SettingsPanel
                 settings={settingsState.settings}

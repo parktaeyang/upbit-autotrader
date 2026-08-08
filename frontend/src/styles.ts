@@ -87,6 +87,24 @@ export const formInput: CSSProperties = {
 
 export const helperText: CSSProperties = { color: "#666", marginTop: 8 };
 
+export const divider: CSSProperties = { border: "none", borderTop: "1px solid #e5e7eb", margin: "16px 0" };
+
+export const table: CSSProperties = { width: "100%", borderCollapse: "collapse", marginTop: 8 };
+
+export const th: CSSProperties = {
+    textAlign: "left",
+    padding: "6px 8px",
+    borderBottom: "1px solid #e5e7eb",
+    fontSize: 13,
+    color: "#555",
+};
+
+export const td: CSSProperties = {
+    padding: "6px 8px",
+    borderBottom: "1px solid #eee",
+    fontSize: 14,
+};
+
 export function notificationTypeColor(type: string): string {
     switch (type) {
         case "BUY":
