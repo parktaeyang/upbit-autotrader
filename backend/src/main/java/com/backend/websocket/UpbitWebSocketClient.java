@@ -46,6 +46,8 @@ public class UpbitWebSocketClient {
 
     private volatile long lastMessageTime = 0;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+    private volatile boolean heartbeatScheduled = false;
+    private volatile boolean reconnecting = false;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -87,8 +89,11 @@ public class UpbitWebSocketClient {
                     sseEmitterRegistry.broadcastStatus(status());
                 });
 
-        // 3) heartbeat 모니터링
-        scheduler.scheduleAtFixedRate(this::checkHeartbeat, 15, 15, TimeUnit.SECONDS);
+        // 3) heartbeat 모니터링 (최초 1회만 등록)
+        if (!heartbeatScheduled) {
+            heartbeatScheduled = true;
+            scheduler.scheduleAtFixedRate(this::checkHeartbeat, 15, 15, TimeUnit.SECONDS);
+        }
     }
 
     /**
@@ -176,11 +181,17 @@ public class UpbitWebSocketClient {
     }
 
     /**
-     * 재연결 로직
+     * 재연결 로직 (동시 재연결 방지)
      */
-    private void reconnect() {
-        disconnect();
-        connect(markets);
+    private synchronized void reconnect() {
+        if (reconnecting) return;
+        reconnecting = true;
+        try {
+            disconnect();
+            connect(markets);
+        } finally {
+            reconnecting = false;
+        }
     }
 
     /**

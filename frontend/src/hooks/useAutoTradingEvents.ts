@@ -19,6 +19,7 @@ export function useAutoTradingEvents() {
     const [notifications, setNotifications] = useState<TradeNotification[]>([]);
     const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
     const sourceRef = useRef<EventSource | null>(null);
+    const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -46,41 +47,64 @@ export function useAutoTradingEvents() {
             }
         };
 
+        const connectSSE = () => {
+            if (cancelled) return;
+
+            setConnectionState("connecting");
+            const source = new EventSource(`${API_BASE}/api/upbit/events`);
+            sourceRef.current = source;
+
+            source.onopen = () => setConnectionState("open");
+
+            source.onerror = () => {
+                setConnectionState("error");
+                source.close();
+                sourceRef.current = null;
+                // 3초 후 재연결
+                if (!cancelled) {
+                    reconnectTimerRef.current = setTimeout(() => {
+                        hydrate();
+                        connectSSE();
+                    }, 3000);
+                }
+            };
+
+            source.addEventListener("status", (e: MessageEvent) => {
+                setStatusText(e.data);
+            });
+
+            source.addEventListener("price", (e: MessageEvent) => {
+                try {
+                    const { market, price } = JSON.parse(e.data) as PriceEvent;
+                    setPrices((prev) => ({ ...prev, [market]: price }));
+                } catch {
+                    // 파싱 실패한 이벤트는 무시
+                }
+            });
+
+            source.addEventListener("notification", (e: MessageEvent) => {
+                try {
+                    const notification = JSON.parse(e.data) as TradeNotification;
+                    setNotifications((prev) => [notification, ...prev].slice(0, MAX_NOTIFICATIONS));
+                } catch {
+                    // 파싱 실패한 이벤트는 무시
+                }
+            });
+        };
+
         hydrate();
-
-        setConnectionState("connecting");
-        const source = new EventSource(`${API_BASE}/api/upbit/events`);
-        sourceRef.current = source;
-
-        source.onopen = () => setConnectionState("open");
-        source.onerror = () => setConnectionState("error");
-
-        source.addEventListener("status", (e: MessageEvent) => {
-            setStatusText(e.data);
-        });
-
-        source.addEventListener("price", (e: MessageEvent) => {
-            try {
-                const { market, price } = JSON.parse(e.data) as PriceEvent;
-                setPrices((prev) => ({ ...prev, [market]: price }));
-            } catch {
-                // 파싱 실패한 이벤트는 무시
-            }
-        });
-
-        source.addEventListener("notification", (e: MessageEvent) => {
-            try {
-                const notification = JSON.parse(e.data) as TradeNotification;
-                setNotifications((prev) => [notification, ...prev].slice(0, MAX_NOTIFICATIONS));
-            } catch {
-                // 파싱 실패한 이벤트는 무시
-            }
-        });
+        connectSSE();
 
         return () => {
             cancelled = true;
-            source.close();
-            sourceRef.current = null;
+            if (reconnectTimerRef.current) {
+                clearTimeout(reconnectTimerRef.current);
+                reconnectTimerRef.current = null;
+            }
+            if (sourceRef.current) {
+                sourceRef.current.close();
+                sourceRef.current = null;
+            }
         };
     }, []);
 

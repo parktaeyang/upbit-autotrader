@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class SseEmitterRegistry {
 
-    private static final long HEARTBEAT_INTERVAL_SECONDS = 20L;
+    private static final long HEARTBEAT_INTERVAL_SECONDS = 10L;
 
     private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
